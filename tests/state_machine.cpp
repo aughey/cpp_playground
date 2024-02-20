@@ -2,33 +2,95 @@
 
 #include <stdint.h>
 
-class IInterface
+enum class FlashResult
 {
-public:
-    virtual void create_thing(uint32_t create_id) = 0;
-    virtual void destroy_thing(uint32_t destroy_id) = 0;
+    Released,
+    Timer
 };
 
-class IActor
+enum class OnOff
 {
-public:
-    virtual void on_frame(IInterface &interface) = 0;
-    virtual void on_thing_created(uint32_t create_id, uint32_t entity_id) = 0;
-    virtual void on_thing_destroyed(uint32_t create_id, uint32_t entity_id) = 0;
+    On,
+    Off
 };
 
-class MyActor : IActor
+class IO
 {
 public:
-    void on_frame(IInterface &interface) override
+    void set_light(OnOff on_or_off)
     {
+        // Set light
     }
 
-    void on_thing_created(uint32_t create_id, uint32_t entity_id) override
+    bool button_pressed()
     {
+        return true;
     }
-
-    void on_thing_destroyed(uint32_t create_id, uint32_t entity_id) override
+    bool button_released()
     {
+        return true;
     }
 };
+
+class Timer
+{
+public:
+    Timer(double seconds) {}
+    bool expired() const
+    {
+        return false;
+    }
+};
+
+/// Returns RELEASED if button released, TIMER if timer expired
+FlashResult flash_stage(OnOff on_or_off, const Timer &timer, IO &io)
+{
+    io.set_light(on_or_off);
+
+    while (true)
+    {
+        if (io.button_released())
+        {
+            return FlashResult::Released;
+        }
+        if (timer.expired())
+        {
+            return FlashResult::Timer;
+        }
+    }
+}
+void flash_until_release(IO &io)
+{
+    // Flashing
+    while (true)
+    {
+        if (FlashResult::Released == flash_stage(OnOff::On, Timer(1.0), io))
+        {
+            break;
+        }
+        if (FlashResult::Released == flash_stage(OnOff::Off, Timer(1.0), io))
+        {
+            break;
+        }
+    }
+}
+void wait_until_pressed(IO &io)
+{
+    while (true)
+    {
+        if (io.button_pressed())
+        {
+            break;
+        }
+    }
+}
+void start()
+{
+    IO io;
+    while (true)
+    {
+        io.set_light(OnOff::Off);
+        wait_until_pressed(io);
+        flash_until_release(io);
+    }
+}
