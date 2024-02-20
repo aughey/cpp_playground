@@ -64,6 +64,11 @@ graph LR;
 
 > 10% computation, 90% state maintenance
 
+## State machines are REALLY challenging to mentally maintain
+
+- Mental gymnastics to construct the state machine in your head
+- Non-linear - Disconnected transition logic
+
 ## 98% of state machines are not managed by a SM class
 
 State variables globed together with member variables or represented by member variables
@@ -90,8 +95,8 @@ void frame() {
 Nothing else to do, poll internally.
 
 ```c++
-/// Returns RELEASED if button released, TIMER if timer expired
-FlashResult flash_stage(OnOff on_or_off, const Timer &timer, IO &io)
+/// Returns RELEASED if button released, ITimer if ITimer expired
+FlashResult flash_stage(OnOff on_or_off, const ITimer &timer, IIO &io)
 {
     io.set_light(on_or_off);
 
@@ -107,7 +112,8 @@ FlashResult flash_stage(OnOff on_or_off, const Timer &timer, IO &io)
         }
     }
 }
-void flash_until_released(IO &io)
+
+void flash_until_release(IIO &io)
 {
     // Flashing
     while (true)
@@ -122,7 +128,8 @@ void flash_until_released(IO &io)
         }
     }
 }
-void wait_until_pressed(IO &io)
+
+void wait_until_pressed(IIO &io)
 {
     while (true)
     {
@@ -132,6 +139,7 @@ void wait_until_pressed(IO &io)
         }
     }
 }
+
 void start()
 {
     IO io;
@@ -139,7 +147,7 @@ void start()
     {
         io.set_light(OnOff::Off);
         wait_until_pressed(io);
-        flash_until_released(io);
+        flash_until_release(io);
     }
 }
 ```
