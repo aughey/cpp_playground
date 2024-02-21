@@ -20,6 +20,7 @@ impl Timer for SysTimer {
     }
 }
 
+#[derive(Debug)]
 enum States<T>
 where
     T: Timer,
@@ -30,6 +31,7 @@ where
     ReleasedButton,
 }
 
+#[derive(PartialEq, Debug)]
 pub enum Light {
     On,
     Off,
@@ -67,6 +69,10 @@ where
     }
     pub fn do_work(&mut self) {
         while self.handle_state() == true {}
+    }
+    #[cfg(test)]
+    pub(crate) fn current_state(&self) -> &States<T> {
+        &self.state
     }
     fn handle_state(&mut self) -> bool {
         match self.state {
@@ -115,20 +121,22 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
+    use std::cell::RefCell;
     use std::rc::Rc;
 
+    #[derive(Clone, Debug)]
     struct MockTimer {
-        expired: bool,
+        expired: Rc<RefCell<bool>>,
     }
     impl Timer for MockTimer {
         fn expired(&self) -> bool {
-            self.expired
+            *self.expired.borrow()
         }
     }
-    impl TimerFactory for MockTimer {
-        fn new(&self, timeout: f64) -> MockTimer {
-            self
+    impl TimerFactory<MockTimer> for MockTimer {
+        fn new(&self, _timeout: f64) -> MockTimer {
+            *self.expired.borrow_mut() = false;
+            self.clone()
         }
     }
 
@@ -142,6 +150,69 @@ mod tests {
         }
         fn set_light(&mut self, state: Light) {
             self.light = state;
+        }
+    }
+
+    #[test]
+    fn test_state_machine() {
+        let io = MockIO {
+            button_pressed: false,
+            light: Light::Off,
+        };
+        let expired = Rc::new(RefCell::new(false));
+
+        let mut behavior = StateMachineSync::new(
+            io,
+            MockTimer {
+                expired: expired.clone(),
+            },
+        );
+
+        for _ in 0..100 {
+            behavior.do_work();
+            assert_eq!(behavior.io.light, Light::Off);
+            assert!(
+                matches!(*behavior.current_state(), States::NotPressed),
+                "Found {:?}",
+                behavior.current_state()
+            );
+        }
+
+        behavior.io.button_pressed = true;
+        for _ in 0..100 {
+            behavior.do_work();
+            assert_eq!(behavior.io.light, Light::On);
+            assert!(
+                matches!(*behavior.current_state(), States::BlinkOn(_)),
+                "Found {:?}",
+                behavior.current_state()
+            );
+        }
+
+        *expired.borrow_mut() = true;
+
+        for _ in 0..100 {
+            behavior.do_work();
+            assert_eq!(behavior.io.light, Light::Off);
+            assert!(
+                matches!(*behavior.current_state(), States::BlinkOff(_)),
+                "Found {:?}",
+                behavior.current_state()
+            );
+        }
+
+        behavior.io.button_pressed = false;
+
+        // Shoudl go to released button and immediate to not pressed (without seeing released button)
+
+        for _ in 0..100 {
+            behavior.do_work();
+            assert_eq!(behavior.io.light, Light::Off);
+            assert!(
+                matches!(*behavior.current_state(), States::NotPressed),
+                "Found {:?}",
+                behavior.current_state()
+            );
         }
     }
 }
