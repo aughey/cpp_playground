@@ -23,46 +23,50 @@ public:
     virtual bool button_released() = 0;
 };
 
-class IO : public IIO
+class TestIO : public IIO
 {
 public:
     void set_light(OnOff on_or_off) override
     {
-        // Set the light
+        light_value = on_or_off;
     }
     bool button_pressed() override
     {
         // Return true if the button is pressed
-        return true;
+        return button_pressed_value;
     }
     bool button_released() override
     {
         // Return true if the button is released
-        return true;
+        return !button_pressed_value;
     }
+    OnOff light_value = OnOff::Off;
+    bool button_pressed_value = false;
 };
 
 class ITimer
 {
 public:
-    virtual void reset(double seconds) = 0;
+    virtual ITimer &reset(double seconds) = 0;
     virtual bool expired() const = 0;
 };
 
-class Timer : public ITimer
+class TestTimer : public ITimer
 {
 public:
-    Timer() {}
-    Timer(double seconds) {}
-    void reset(double seconds) override
+    TestTimer() {}
+    TestTimer(double seconds) {}
+    ITimer &reset(double seconds) override
     {
-        // Reset the timer
+        expired_value = false;
+        return *this;
     }
     bool expired() const override
     {
         // Return true if the timer has expired
-        return true;
+        return expired_value;
     }
+    bool expired_value = false;
 };
 
 /// Returns RELEASED if button released, ITimer if ITimer expired
@@ -83,16 +87,16 @@ FlashResult flash_stage(OnOff on_or_off, const ITimer &timer, IIO &io)
     }
 }
 
-void flash_until_release(IIO &io)
+void flash_until_release(IIO &io, ITimer &timer)
 {
     // Flashing
     while (true)
     {
-        if (FlashResult::Released == flash_stage(OnOff::On, Timer(1.0), io))
+        if (FlashResult::Released == flash_stage(OnOff::On, timer.reset(1.0), io))
         {
             break;
         }
-        if (FlashResult::Released == flash_stage(OnOff::Off, Timer(1.0), io))
+        if (FlashResult::Released == flash_stage(OnOff::Off, timer.reset(1.0), io))
         {
             break;
         }
@@ -110,26 +114,37 @@ void wait_until_pressed(IIO &io)
     }
 }
 
-void start()
+void start(IIO &io, ITimer &timer)
 {
-    IO io;
     while (true)
     {
         io.set_light(OnOff::Off);
         wait_until_pressed(io);
-        flash_until_release(io);
+        flash_until_release(io, timer);
     }
 }
 
 class PolledButtonBehavior
 {
 public:
+    enum class States
+    {
+        NotPressed,
+        BlinkOn,
+        BlinkOff,
+        ReleasedButton
+    };
     PolledButtonBehavior(IIO &io, ITimer &timer) : io(io), timer(timer) {}
     void do_work()
     {
         while (handle_state() == true)
         {
         }
+    }
+
+    States get_state() const
+    {
+        return current_state;
     }
 
     bool handle_state()
@@ -140,7 +155,7 @@ public:
             if (io.button_pressed())
             {
                 current_state = States::BlinkOn;
-                io.set_light(OnOff::Off);
+                io.set_light(OnOff::On);
                 timer.reset(1.0);
                 return true;
             }
@@ -169,25 +184,20 @@ public:
             {
                 io.set_light(OnOff::On);
                 timer.reset(1.0);
-                current_state = States::BlinkOff;
+                current_state = States::BlinkOn;
                 return true;
             }
             break;
         case States::ReleasedButton:
             io.set_light(OnOff::Off);
             current_state = States::NotPressed;
+            return true;
             break;
         }
+        return false;
     }
 
 protected:
-    enum class States
-    {
-        NotPressed,
-        BlinkOn,
-        BlinkOff,
-        ReleasedButton
-    };
     States current_state = States::NotPressed;
     IIO &io;
     ITimer &timer;
@@ -196,5 +206,45 @@ protected:
 // Simple test to check equality of two numbers
 TEST(StateMachine, FrameBehavior)
 {
-    ASSERT_EQ(1, 1);
+    TestIO io;
+    TestTimer timer;
+    PolledButtonBehavior behavior(io, timer);
+
+    behavior.do_work();
+    ASSERT_EQ(behavior.get_state(), PolledButtonBehavior::States::NotPressed);
+    ASSERT_EQ(io.light_value, OnOff::Off);
+
+    // Press the button
+    io.button_pressed_value = true;
+    behavior.do_work();
+    // Light goes on immediately
+    ASSERT_EQ(io.light_value, OnOff::On);
+    ASSERT_EQ(behavior.get_state(), PolledButtonBehavior::States::BlinkOn);
+
+    // Do work for a while and no change
+    for (int i = 0; i < 100; ++i)
+    {
+        behavior.do_work();
+
+        ASSERT_EQ(io.light_value, OnOff::On);
+        ASSERT_EQ(behavior.get_state(), PolledButtonBehavior::States::BlinkOn);
+    }
+
+    // Let the timer expire and see that it transitions to blink off
+    timer.expired_value = true;
+    behavior.do_work();
+    ASSERT_EQ(io.light_value, OnOff::Off);
+    ASSERT_EQ(behavior.get_state(), PolledButtonBehavior::States::BlinkOff);
+
+    // See that it transitions back to blink on when timer expired again
+    timer.expired_value = true;
+    behavior.do_work();
+    ASSERT_EQ(io.light_value, OnOff::On);
+    ASSERT_EQ(behavior.get_state(), PolledButtonBehavior::States::BlinkOn);
+
+    // Release the button and it will double transition to not pressed
+    io.button_pressed_value = false;
+    behavior.do_work();
+    ASSERT_EQ(io.light_value, OnOff::Off);
+    ASSERT_EQ(behavior.get_state(), PolledButtonBehavior::States::NotPressed);
 }
