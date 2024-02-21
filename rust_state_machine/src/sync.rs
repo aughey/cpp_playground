@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use crate::{Light, IO};
+
 pub trait Timer {
     fn expired(&self) -> bool;
 }
@@ -29,19 +31,6 @@ where
     BlinkOn(T),
     BlinkOff(T),
     ReleasedButton,
-}
-
-#[derive(PartialEq, Debug)]
-pub enum Light {
-    On,
-    Off,
-}
-pub trait IO {
-    fn button_pressed(&self) -> bool;
-    fn button_released(&self) -> bool {
-        !self.button_pressed()
-    }
-    fn set_light(&mut self, state: Light);
 }
 
 pub struct StateMachineSync<TF, T, I>
@@ -120,6 +109,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::Light;
+
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
