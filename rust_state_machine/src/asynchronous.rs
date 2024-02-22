@@ -9,6 +9,7 @@ pub async fn start(mut io: impl AsyncIO, mut timer: impl AsyncTimer) {
 }
 
 async fn flash_until_released(io: &mut impl AsyncIO, timer: &mut impl AsyncTimer) {
+    // Setup our initial state of the light being on and the timer being reset
     // Keep track of whether the light is on or off
     let mut light_state = Light::On;
     // Turn the light on
@@ -16,7 +17,8 @@ async fn flash_until_released(io: &mut impl AsyncIO, timer: &mut impl AsyncTimer
     // Reset the timer so we get a full blink
     timer.reset();
 
-    // Loop until the timer expires or the button is released
+    // Loop until the timer expires or the button is released.
+    // Keep looping if the thing that happened was the timer expiring.
     while TimerOrButton::Timer == timer_expired_or_button_released(io, timer).await {
         // Inside the loop the timer expired, reset timer, flip light state, and set light
         timer.reset();
