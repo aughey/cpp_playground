@@ -97,9 +97,11 @@ void flash_until_released(IIO &io, ITimer &timer)
     {
         io.set_light(on_off);
         timer.reset(1.0);
-        if (FlashResult::Timer == button_released_or_timer_expired(io, timer))
+        auto winner = button_released_or_timer_expired(io, timer);
+        if (FlashResult::Timer == winner)
         {
-            break;
+            // Timer expired
+            return;
         }
         on_off = toggle(on_off);
     }

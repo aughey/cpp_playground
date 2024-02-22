@@ -34,9 +34,8 @@ async fn flash_until_released(io: &mut impl AsyncIO, mut timer: impl AsyncTimer)
     loop {
         io.set_light(on_off);
         timer.reset();
-        if let FirstSecond::Second(_) =
-            first_to_complete(timer.wait_expired(), io.wait_for_released()).await
-        {
+        let winner = first_to_complete(timer.wait_expired(), io.wait_for_released()).await;
+        if let FirstSecond::Second(_) = winner {
             // Timer expired
             return;
         };
