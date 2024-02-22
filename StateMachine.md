@@ -54,7 +54,7 @@ graph LR;
 - Released Button
     - Enter: Turn off light and immediately transition to Not Pressed
 
-## Alternate Time Sequenced Requirements
+## Alternate Synchronous Requirements
 1. Turn off light
 1. Wait for button to be pressed.
 2. Repeat below until button is released.
