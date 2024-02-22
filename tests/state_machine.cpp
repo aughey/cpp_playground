@@ -14,6 +14,10 @@ enum class OnOff
     On,
     Off
 };
+static OnOff toggle(OnOff value)
+{
+    return (value == OnOff::On) ? OnOff::Off : OnOff::On;
+}
 
 class IIO
 {
@@ -69,11 +73,9 @@ public:
     bool expired_value = false;
 };
 
-/// Returns RELEASED if button released, ITimer if ITimer expired
-FlashResult flash_stage(OnOff on_or_off, const ITimer &timer, IIO &io)
+/// Busy-waits on the two options.  Returns RELEASED if button released, ITimer if ITimer expired
+FlashResult button_released_or_timer_expired(IIO &io, ITimer &timer)
 {
-    io.set_light(on_or_off);
-
     while (true)
     {
         if (io.button_released())
@@ -87,19 +89,19 @@ FlashResult flash_stage(OnOff on_or_off, const ITimer &timer, IIO &io)
     }
 }
 
-void flash_until_release(IIO &io, ITimer &timer)
+void flash_until_released(IIO &io, ITimer &timer)
 {
     // Flashing
+    OnOff on_off = OnOff::On;
     while (true)
     {
-        if (FlashResult::Released == flash_stage(OnOff::On, timer.reset(1.0), io))
+        io.set_light(on_off);
+        timer.reset(1.0);
+        if (FlashResult::Timer == button_released_or_timer_expired(io, timer))
         {
             break;
         }
-        if (FlashResult::Released == flash_stage(OnOff::Off, timer.reset(1.0), io))
-        {
-            break;
-        }
+        on_off = toggle(on_off);
     }
 }
 
@@ -120,7 +122,7 @@ void start(IIO &io, ITimer &timer)
     {
         io.set_light(OnOff::Off);
         wait_until_pressed(io);
-        flash_until_release(io, timer);
+        flash_until_released(io, timer);
     }
 }
 

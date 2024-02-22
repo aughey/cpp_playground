@@ -33,13 +33,14 @@ async fn flash_until_released(io: &mut impl AsyncIO, mut timer: impl AsyncTimer)
     let mut on_off = Light::On;
     loop {
         io.set_light(on_off);
-        on_off = match first_to_complete(timer.wait_expired(), io.wait_for_released()).await {
-            FirstSecond::First(_) => {
-                timer.reset();
-                on_off.toggle()
-            }
-            FirstSecond::Second(_) => break,
+        timer.reset();
+        if let FirstSecond::Second(_) =
+            first_to_complete(timer.wait_expired(), io.wait_for_released()).await
+        {
+            // Timer expired
+            return;
         };
+        on_off = on_off.toggle();
     }
 }
 
