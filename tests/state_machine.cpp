@@ -89,25 +89,31 @@ FlashResult button_released_or_timer_expired(IIO &io, ITimer &timer)
     }
 }
 
-void flash_until_released(IIO &io, ITimer &timer)
+void flash_until_button_released(IIO &io, ITimer &timer)
 {
-    // Flashing
-    OnOff on_off = OnOff::On;
-    while (true)
+    // Setup our initial state of the light being on and the timer being reset
+    // Keep track of whether the light is on or off
+    OnOff light_state = OnOff::On;
+    // Turn the light on
+    io.set_light(light_state);
+    // Reset the timer so we get a full blink
+    timer.reset(1.0);
+
+    // Loop until the button is released or the timer expires
+    // Keep looping if the thing that happened was the timer expiring.
+    while (FlashResult::Timer == button_released_or_timer_expired(io, timer))
     {
-        io.set_light(on_off);
+        // Inside the loop the timer expired. Reset timer, flip the light state, and set the light
         timer.reset(1.0);
-        auto winner = button_released_or_timer_expired(io, timer);
-        if (FlashResult::Timer == winner)
-        {
-            // Timer expired
-            return;
-        }
-        on_off = toggle(on_off);
+        light_state = toggle(light_state);
+        io.set_light(light_state);
     }
+
+    // Before we exit, turn the light back off.
+    io.set_light(OnOff::Off);
 }
 
-void wait_until_pressed(IIO &io)
+void wait_until_button_pressed(IIO &io)
 {
     while (true)
     {
@@ -120,11 +126,11 @@ void wait_until_pressed(IIO &io)
 
 void start(IIO &io, ITimer &timer)
 {
+    io.set_light(OnOff::Off);
     while (true)
     {
-        io.set_light(OnOff::Off);
-        wait_until_pressed(io);
-        flash_until_released(io, timer);
+        wait_until_button_pressed(io);
+        flash_until_button_released(io, timer);
     }
 }
 
@@ -141,16 +147,14 @@ public:
     PolledButtonBehavior(IIO &io, ITimer &timer) : io(io), timer(timer) {}
     void do_work()
     {
+        // handle_state might perform multiple state transitions, so call
+        // it repeatedly until it's done working.
         while (handle_state() == true)
         {
         }
     }
 
-    States get_state() const
-    {
-        return current_state;
-    }
-
+    // Return false when there is no more work to do
     bool handle_state()
     {
         switch (current_state)
@@ -199,6 +203,11 @@ public:
             break;
         }
         return false;
+    }
+
+    States get_state() const
+    {
+        return current_state;
     }
 
 protected:

@@ -1,14 +1,26 @@
-use crate::{first_to_complete, AsyncIO, AsyncTimer, Light, TimerOrButton};
+use crate::{wait_for_one_to_complete, AsyncIO, AsyncTimer, Light, TimerOrButton};
 
+/// The entry point for the flashing behavior of a light when a button is pressed.
+/// This is the top level of the state machine providing the sequence of events to
+/// act one according to the defined business logic.
+///
+/// Business logic says to wait for the button to be pressed, then flash the light
+/// until the button is released.
 pub async fn start(mut io: impl AsyncIO, mut timer: impl AsyncTimer) {
+    // initial light state is off.
+    io.set_light(Light::Off);
+
     loop {
-        io.set_light(Light::Off);
-        io.wait_for_pressed().await;
-        flash_until_released(&mut io, &mut timer).await;
+        io.wait_until_button_pressed().await;
+        flash_until_button_released(&mut io, &mut timer).await;
     }
 }
 
-async fn flash_until_released(io: &mut impl AsyncIO, timer: &mut impl AsyncTimer) {
+/// Internal state logic for flashing the light until the button is released.
+/// Internal to this function will keep track of the current light state and
+/// toggle the light state every time the timer expires.  If the button is released
+/// at any time, this flashing behavior will stop.
+async fn flash_until_button_released(io: &mut impl AsyncIO, timer: &mut impl AsyncTimer) {
     // Setup our initial state of the light being on and the timer being reset
     // Keep track of whether the light is on or off
     let mut light_state = Light::On;
@@ -25,13 +37,16 @@ async fn flash_until_released(io: &mut impl AsyncIO, timer: &mut impl AsyncTimer
         light_state = light_state.toggle();
         io.set_light(light_state);
     }
+
+    // When the button is released, set the light back to off.
+    io.set_light(Light::Off);
 }
 
 async fn timer_expired_or_button_released(
     io: &mut impl AsyncIO,
     timer: &impl AsyncTimer,
 ) -> TimerOrButton {
-    first_to_complete(io.wait_for_released(), timer.wait_expired())
+    wait_for_one_to_complete(io.wait_for_released(), timer.wait_expired())
         .await
         .into()
 }
@@ -42,7 +57,7 @@ mod tests {
     use futures::{executor::LocalPool, Future};
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::{ButtonState, TimerExpired, IO};
+    use crate::{ButtonEvent, TimerEvent, IO};
 
     use super::*;
 
@@ -51,11 +66,11 @@ mod tests {
     }
     impl AsyncTimer for MockAsyncTimer {
         fn reset(&mut self) {}
-        fn wait_expired(&self) -> impl Future<Output = TimerExpired> + Unpin {
+        fn wait_expired(&self) -> impl Future<Output = TimerEvent> + Unpin {
             // just wait for a single expired message
             Box::pin(async {
                 self.expired.borrow_mut().recv().await;
-                TimerExpired {}
+                TimerEvent {}
             })
         }
     }
@@ -74,7 +89,7 @@ mod tests {
         }
     }
     impl AsyncIO for MockAsyncIO {
-        fn wait_for_pressed(&mut self) -> impl Future<Output = ButtonState> + Unpin {
+        fn wait_until_button_pressed(&mut self) -> impl Future<Output = ButtonEvent> + Unpin {
             let rx = self.button_rx.clone();
             Box::pin(async move {
                 while let Some(pressed) = rx.borrow_mut().recv().await {
@@ -83,10 +98,10 @@ mod tests {
                         break;
                     }
                 }
-                ButtonState {}
+                ButtonEvent {}
             })
         }
-        fn wait_for_released(&mut self) -> impl Future<Output = ButtonState> + Unpin {
+        fn wait_for_released(&mut self) -> impl Future<Output = ButtonEvent> + Unpin {
             let rx = self.button_rx.clone();
             Box::pin(async move {
                 while let Some(pressed) = rx.borrow_mut().recv().await {
@@ -95,7 +110,7 @@ mod tests {
                         break;
                     }
                 }
-                ButtonState {}
+                ButtonEvent {}
             })
         }
     }
