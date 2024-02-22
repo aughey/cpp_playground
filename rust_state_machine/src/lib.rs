@@ -43,3 +43,32 @@ where
         Either::Right((value_2, _)) => FirstSecond::Second(value_2),
     }
 }
+
+#[derive(Debug, PartialEq)]
+enum TimerOrButton {
+    Timer,
+    Button,
+}
+
+// A slick quality of life to convert a FirstSecond into a TimerOrButton
+// This is type safe protected because of the return types of the FirstOrSecond enum
+impl From<FirstSecond<ButtonState, TimerExpired>> for TimerOrButton {
+    fn from(value: FirstSecond<ButtonState, TimerExpired>) -> Self {
+        match value {
+            FirstSecond::First(_) => TimerOrButton::Button,
+            FirstSecond::Second(_) => TimerOrButton::Timer,
+        }
+    }
+}
+
+struct ButtonState;
+pub trait AsyncIO: IO {
+    fn wait_for_pressed(&mut self) -> impl Future<Output = ButtonState> + Unpin;
+    fn wait_for_released(&mut self) -> impl Future<Output = ButtonState> + Unpin;
+}
+
+struct TimerExpired;
+pub trait AsyncTimer {
+    fn reset(&mut self);
+    fn wait_expired(&self) -> impl Future<Output = TimerExpired> + Unpin;
+}

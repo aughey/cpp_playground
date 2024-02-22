@@ -76,6 +76,7 @@ State variables globed together with member variables or represented by member v
 ```c++
 private:
 Thing *m_thing = 0;
+int created_id = -1;
 
 void frame() {
   if(m_thing == 0) {
@@ -97,6 +98,7 @@ Nothing else to do, poll internally.
 ```c++
 /// Returns RELEASED if button released, ITimer if ITimer expired
 FlashResult flash_stage(OnOff on_or_off, const ITimer &timer, IIO &io)
+
 {
     io.set_light(on_or_off);
 
