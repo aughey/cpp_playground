@@ -55,6 +55,9 @@ async fn timer_expired_or_button_released(
 mod tests {
     use futures::task::LocalSpawnExt;
     use futures::{executor::LocalPool, Future};
+    use std::cell::Cell;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
     use std::{cell::RefCell, rc::Rc};
 
     use crate::{ButtonEvent, TimerEvent, IO};
@@ -176,5 +179,78 @@ mod tests {
             pool.try_run_one();
             assert_eq!(*light.borrow(), Light::Off);
         }
+    }
+
+    struct YieldNow {
+        has_yielded: Cell<bool>,
+    }
+
+    impl YieldNow {
+        fn new() -> Self {
+            Self {
+                has_yielded: Cell::new(false),
+            }
+        }
+    }
+
+    impl Future for YieldNow {
+        type Output = ();
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            if self.has_yielded.get() {
+                Poll::Ready(())
+            } else {
+                self.has_yielded.set(true);
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
+    }
+
+    fn yield_now() -> YieldNow {
+        YieldNow::new()
+    }
+
+    #[test]
+    fn polled_async_behavior() {
+        let value = Rc::new(RefCell::new(false));
+        let started = Rc::new(RefCell::new(false));
+        let exited = Rc::new(RefCell::new(false));
+        let loop_count = Rc::new(RefCell::new(0usize));
+
+        let poll_until_true = {
+            let value = value.clone();
+            let started = started.clone();
+            let exited = exited.clone();
+            let loop_count = loop_count.clone();
+            async move {
+                *started.borrow_mut() = true;
+                while !*value.borrow() {
+                    //futures_timer::Delay::new(std::time::Duration::from_millis(0)).await;
+                    yield_now().await;
+
+                    let count = loop_count.borrow().clone() + 1;
+                    *loop_count.borrow_mut() = count;
+                }
+                *exited.borrow_mut() = true;
+            }
+        };
+
+        let mut pool = LocalPool::new();
+        pool.spawner()
+            .spawn_local(poll_until_true)
+            .expect("Failed to spawn poll_until_true");
+
+        assert_eq!(exited.borrow().clone(), false);
+        assert_eq!(started.borrow().clone(), false);
+        assert_eq!(loop_count.borrow().clone(), 0);
+        // pool.run_until_stalled();
+        // assert_eq!(started.borrow().clone(), true);
+        // assert_eq!(exited.borrow().clone(), false);
+        // assert_eq!(loop_count.borrow().clone(), 1);
+        // *value.borrow_mut() = true;
+        // assert_eq!(exited.borrow().clone(), false);
+        // pool.run_until_stalled();
+        // assert_eq!(exited.borrow().clone(), true);
     }
 }
