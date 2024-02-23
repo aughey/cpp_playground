@@ -58,7 +58,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use crate::async_frame::FrameBlocker;
-    use crate::sync::tests::MockTimer;
+    use crate::sync::tests::{MockIO, MockTimer};
     use crate::sync::Timer;
     use crate::{ButtonEvent, TimerEvent, IO};
 
@@ -73,7 +73,6 @@ mod tests {
             self.timer.reset();
         }
         fn wait_expired(&self) -> impl Future<Output = TimerEvent> + Unpin {
-            // just wait for a single expired message
             Box::pin(async {
                 while !self.timer.expired() {
                     self.blocker.yield_control().await;
@@ -83,40 +82,40 @@ mod tests {
         }
     }
 
-    struct MockAsyncIO {
-        button_rx: Rc<RefCell<tokio::sync::mpsc::Receiver<bool>>>,
-        button: bool,
-        light: Rc<RefCell<Light>>,
+    struct MockAsyncIO<I>
+    where
+        I: IO,
+    {
+        io: I,
+        blocker: FrameBlocker,
     }
-    impl IO for MockAsyncIO {
+    impl<I> IO for MockAsyncIO<I>
+    where
+        I: IO,
+    {
         fn button_pressed(&self) -> bool {
-            self.button
+            self.io.button_pressed()
         }
         fn set_light(&mut self, state: Light) {
-            *self.light.borrow_mut() = state;
+            self.io.set_light(state);
         }
     }
-    impl AsyncIO for MockAsyncIO {
+    impl<I> AsyncIO for MockAsyncIO<I>
+    where
+        I: IO,
+    {
         fn wait_until_button_pressed(&mut self) -> impl Future<Output = ButtonEvent> + Unpin {
-            let rx = self.button_rx.clone();
-            Box::pin(async move {
-                while let Some(pressed) = rx.borrow_mut().recv().await {
-                    self.button = pressed;
-                    if pressed {
-                        break;
-                    }
+            Box::pin(async {
+                while !self.io.button_pressed() {
+                    self.blocker.yield_control().await;
                 }
                 ButtonEvent {}
             })
         }
         fn wait_for_released(&mut self) -> impl Future<Output = ButtonEvent> + Unpin {
-            let rx = self.button_rx.clone();
-            Box::pin(async move {
-                while let Some(pressed) = rx.borrow_mut().recv().await {
-                    self.button = pressed;
-                    if !pressed {
-                        break;
-                    }
+            Box::pin(async {
+                while !self.io.button_released() {
+                    self.blocker.yield_control().await;
                 }
                 ButtonEvent {}
             })
@@ -128,22 +127,18 @@ mod tests {
         // A bit of setup to rig up the mock IO and timer to work in this async environment
         let light = Rc::new(RefCell::new(Light::Off));
 
-        let (button_tx, button_rx) = tokio::sync::mpsc::channel(1);
+        let mut pool_poll = crate::async_frame::PollingPool::default();
 
-        let button_rx = Rc::new(RefCell::new(button_rx));
-
+        let button_pressed = Rc::new(RefCell::new(false));
         let io = MockAsyncIO {
-            button_rx,
-            button: false,
-            light: light.clone(),
+            io: MockIO::new(button_pressed.clone(), light.clone()),
+            blocker: pool_poll.new_blocker(),
         };
-
-        let mut poll_poll = crate::async_frame::PollingPool::default();
 
         let time_expired = Rc::new(RefCell::new(false));
         let timer = MockAsyncTimer {
             timer: MockTimer::new(time_expired.clone()),
-            blocker: poll_poll.new_blocker(),
+            blocker: pool_poll.new_blocker(),
         };
 
         let mut pool = LocalPool::new();
@@ -152,20 +147,23 @@ mod tests {
             .expect("Failed to spawn start");
 
         let mut frame = move || {
-            poll_poll.wake_children();
+            pool_poll.wake_children();
             pool.run_until_stalled();
         };
 
-        frame();
-        assert_eq!(*light.borrow(), Light::Off);
-
-        // simulate button press
-        button_tx.blocking_send(true).unwrap();
-
-        assert_eq!(*light.borrow(), Light::Off);
+        // Should be off
         for _ in 0..10 {
             frame();
-            assert_eq!(*light.borrow(), Light::On);
+            assert_eq!(*light.borrow(), Light::Off);
+        }
+
+        // simulate button press
+        button_pressed.replace(true);
+
+        assert_eq!(*light.borrow(), Light::Off);
+        for i in 0..10 {
+            frame();
+            assert_eq!(*light.borrow(), Light::On, "Failed on iteration {}", i);
         }
 
         // Simulate a timer expiration
@@ -186,7 +184,7 @@ mod tests {
         }
 
         // And release the button, should go off for good
-        button_tx.blocking_send(false).unwrap();
+        button_pressed.replace(false);
         for _ in 0..10 {
             frame();
             assert_eq!(*light.borrow(), Light::Off);

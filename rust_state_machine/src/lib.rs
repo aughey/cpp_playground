@@ -10,6 +10,11 @@ pub enum Light {
     On,
     Off,
 }
+impl Default for Light {
+    fn default() -> Self {
+        Light::Off
+    }
+}
 impl Light {
     /// Returns the opposite state of the light.
     pub fn toggle(&self) -> Light {

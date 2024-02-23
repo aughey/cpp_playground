@@ -12,7 +12,7 @@ pub struct FrameBlocker {
 }
 impl FrameBlocker {
     pub async fn yield_control(&self) {
-        YieldNow::new(self.waker.clone()).await;
+        YieldLater::new(self.waker.clone()).await;
     }
 }
 
@@ -36,12 +36,12 @@ impl PollingPool {
     }
 }
 
-struct YieldNow {
+struct YieldLater {
     has_yielded: Cell<bool>,
     waker: Rc<RefCell<Option<Waker>>>,
 }
 
-impl YieldNow {
+impl YieldLater {
     fn new(waker: Rc<RefCell<Option<Waker>>>) -> Self {
         Self {
             waker,
@@ -50,7 +50,7 @@ impl YieldNow {
     }
 }
 
-impl Future for YieldNow {
+impl Future for YieldLater {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

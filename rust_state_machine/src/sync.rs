@@ -144,24 +144,35 @@ pub mod tests {
         }
     }
 
-    struct MockIO {
-        button_pressed: bool,
-        light: Light,
+    #[derive(Default)]
+    pub struct MockIO {
+        button_pressed: Rc<RefCell<bool>>,
+        light: Rc<RefCell<Light>>,
+    }
+    impl MockIO {
+        pub fn new(button_pressed: Rc<RefCell<bool>>, light: Rc<RefCell<Light>>) -> Self {
+            Self {
+                button_pressed,
+                light,
+            }
+        }
     }
     impl IO for MockIO {
         fn button_pressed(&self) -> bool {
-            self.button_pressed
+            *self.button_pressed.borrow()
         }
         fn set_light(&mut self, state: Light) {
-            self.light = state;
+            *self.light.borrow_mut() = state;
         }
     }
 
     #[test]
     fn test_state_machine() {
+        let button_pressed = Rc::new(RefCell::new(false));
+        let light = Rc::new(RefCell::new(Light::Off));
         let io = MockIO {
-            button_pressed: false,
-            light: Light::Off,
+            button_pressed: button_pressed.clone(),
+            light: light.clone(),
         };
         let expired = Rc::new(RefCell::new(false));
 
@@ -174,7 +185,7 @@ pub mod tests {
 
         for _ in 0..100 {
             behavior.do_work();
-            assert_eq!(behavior.io.light, Light::Off);
+            assert_eq!(*light.borrow_mut(), Light::Off);
             assert!(
                 matches!(*behavior.current_state(), States::NotPressed),
                 "Found {:?}",
@@ -182,10 +193,10 @@ pub mod tests {
             );
         }
 
-        behavior.io.button_pressed = true;
+        button_pressed.replace(true);
         for _ in 0..100 {
             behavior.do_work();
-            assert_eq!(behavior.io.light, Light::On);
+            assert_eq!(*light.borrow(), Light::On);
             assert!(
                 matches!(*behavior.current_state(), States::BlinkOn(_)),
                 "Found {:?}",
@@ -197,7 +208,7 @@ pub mod tests {
 
         for _ in 0..100 {
             behavior.do_work();
-            assert_eq!(behavior.io.light, Light::Off);
+            assert_eq!(*light.borrow(), Light::Off);
             assert!(
                 matches!(*behavior.current_state(), States::BlinkOff(_)),
                 "Found {:?}",
@@ -205,13 +216,13 @@ pub mod tests {
             );
         }
 
-        behavior.io.button_pressed = false;
+        button_pressed.replace(false);
 
         // Should go to released button and immediate to not pressed (without seeing released button)
 
         for _ in 0..100 {
             behavior.do_work();
-            assert_eq!(behavior.io.light, Light::Off);
+            assert_eq!(*light.borrow(), Light::Off);
             assert!(
                 matches!(*behavior.current_state(), States::NotPressed),
                 "Found {:?}",
