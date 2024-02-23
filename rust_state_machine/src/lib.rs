@@ -1,5 +1,6 @@
 use futures::Future;
 
+pub mod async_frame;
 pub mod asynchronous;
 pub mod sync;
 
