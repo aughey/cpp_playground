@@ -57,19 +57,27 @@ mod tests {
     use futures::{executor::LocalPool, Future};
     use std::{cell::RefCell, rc::Rc};
 
+    use crate::async_frame::FrameBlocker;
+    use crate::sync::tests::MockTimer;
+    use crate::sync::Timer;
     use crate::{ButtonEvent, TimerEvent, IO};
 
     use super::*;
 
     struct MockAsyncTimer {
-        expired: Rc<RefCell<tokio::sync::mpsc::Receiver<bool>>>,
+        timer: MockTimer,
+        blocker: FrameBlocker,
     }
     impl AsyncTimer for MockAsyncTimer {
-        fn reset(&mut self) {}
+        fn reset(&mut self) {
+            self.timer.reset();
+        }
         fn wait_expired(&self) -> impl Future<Output = TimerEvent> + Unpin {
             // just wait for a single expired message
             Box::pin(async {
-                self.expired.borrow_mut().recv().await;
+                while !self.timer.expired() {
+                    self.blocker.yield_control().await;
+                }
                 TimerEvent {}
             })
         }
@@ -130,10 +138,12 @@ mod tests {
             light: light.clone(),
         };
 
-        let (expire_tx, expire_rx) = tokio::sync::mpsc::channel(1);
+        let mut poll_poll = crate::async_frame::PollingPool::default();
 
+        let time_expired = Rc::new(RefCell::new(false));
         let timer = MockAsyncTimer {
-            expired: Rc::new(RefCell::new(expire_rx)),
+            timer: MockTimer::new(time_expired.clone()),
+            blocker: poll_poll.new_blocker(),
         };
 
         let mut pool = LocalPool::new();
@@ -141,8 +151,12 @@ mod tests {
             .spawn_local(start(io, timer))
             .expect("Failed to spawn start");
 
-        pool.try_run_one();
+        let mut frame = move || {
+            poll_poll.wake_children();
+            pool.run_until_stalled();
+        };
 
+        frame();
         assert_eq!(*light.borrow(), Light::Off);
 
         // simulate button press
@@ -150,30 +164,31 @@ mod tests {
 
         assert_eq!(*light.borrow(), Light::Off);
         for _ in 0..10 {
-            pool.try_run_one();
+            frame();
             assert_eq!(*light.borrow(), Light::On);
         }
 
         // Simulate a timer expiration
-        expire_tx.blocking_send(true).unwrap();
+        *time_expired.borrow_mut() = true;
 
         // Should switch to off
         for _ in 0..10 {
-            pool.try_run_one();
+            frame();
             assert_eq!(*light.borrow(), Light::Off);
         }
+        assert_eq!(time_expired.borrow().clone(), false);
 
         // And back on again
-        expire_tx.blocking_send(true).unwrap();
+        *time_expired.borrow_mut() = true;
         for _ in 0..10 {
-            pool.try_run_one();
+            frame();
             assert_eq!(*light.borrow(), Light::On);
         }
 
         // And release the button, should go off for good
         button_tx.blocking_send(false).unwrap();
         for _ in 0..10 {
-            pool.try_run_one();
+            frame();
             assert_eq!(*light.borrow(), Light::Off);
         }
     }

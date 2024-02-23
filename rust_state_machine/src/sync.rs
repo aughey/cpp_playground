@@ -3,6 +3,7 @@ use std::time::Instant;
 use crate::{Light, IO};
 
 pub trait Timer {
+    fn reset(&mut self);
     fn expired(&self) -> bool;
 }
 pub trait TimerFactory<T> {
@@ -16,6 +17,9 @@ struct SysTimer {
     timeout: f64,
 }
 impl Timer for SysTimer {
+    fn reset(&mut self) {
+        self.start = Instant::now();
+    }
     fn expired(&self) -> bool {
         let diff = Instant::now() - self.start;
         diff.as_secs_f64() > self.timeout
@@ -108,20 +112,29 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::Light;
 
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    #[derive(Clone, Debug)]
-    struct MockTimer {
+    #[derive(Clone, Default, Debug)]
+    pub struct MockTimer {
         expired: Rc<RefCell<bool>>,
+    }
+    impl MockTimer {
+        pub fn new(expired: Rc<RefCell<bool>>) -> Self {
+            Self { expired }
+        }
     }
     impl Timer for MockTimer {
         fn expired(&self) -> bool {
             *self.expired.borrow()
+        }
+
+        fn reset(&mut self) {
+            self.expired.replace(false);
         }
     }
     impl TimerFactory<MockTimer> for MockTimer {
