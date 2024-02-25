@@ -147,13 +147,19 @@ pub mod tests {
     #[derive(Default)]
     pub struct MockIO {
         button_pressed: Rc<RefCell<bool>>,
+        voltage: Rc<RefCell<bool>>,
         light: Rc<RefCell<Light>>,
     }
     impl MockIO {
-        pub fn new(button_pressed: Rc<RefCell<bool>>, light: Rc<RefCell<Light>>) -> Self {
+        pub fn new(
+            button_pressed: Rc<RefCell<bool>>,
+            light: Rc<RefCell<Light>>,
+            voltage: Rc<RefCell<bool>>,
+        ) -> Self {
             Self {
                 button_pressed,
                 light,
+                voltage,
             }
         }
     }
@@ -164,15 +170,20 @@ pub mod tests {
         fn set_light(&mut self, state: Light) {
             *self.light.borrow_mut() = state;
         }
+        fn read_voltage(&self) -> bool {
+            *self.voltage.borrow()
+        }
     }
 
     #[test]
     fn test_state_machine() {
         let button_pressed = Rc::new(RefCell::new(false));
         let light = Rc::new(RefCell::new(Light::Off));
+        let voltage = Rc::new(RefCell::new(true));
         let io = MockIO {
             button_pressed: button_pressed.clone(),
             light: light.clone(),
+            voltage: voltage.clone(),
         };
         let expired = Rc::new(RefCell::new(false));
 
