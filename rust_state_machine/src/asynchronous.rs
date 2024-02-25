@@ -274,4 +274,66 @@ mod tests {
             assert_eq!(*light.borrow(), Light::Off);
         }
     }
+
+    #[test]
+    fn test_voltage_monitor() {
+        let mut pool_poll = crate::async_frame::PollingPool::default();
+        let timer_expired = Rc::new(RefCell::new(false));
+        let timer = MockAsyncTimer {
+            timer: MockTimer::new(timer_expired.clone()),
+            blocker: pool_poll.new_blocker(),
+        };
+        let voltage_value = Rc::new(RefCell::new(true));
+        let io = MockAsyncIO {
+            io: MockIO::new(
+                Rc::new(RefCell::new(false)),
+                Rc::new(RefCell::new(Light::Off)),
+                voltage_value.clone(),
+            ),
+            blocker: pool_poll.new_blocker(),
+        };
+
+        let voltage_errored = Rc::new(Cell::new(None));
+        let mut pool = LocalPool::new();
+        {
+            let voltage_errored = voltage_errored.clone();
+            let io = &io;
+            pool.spawner()
+                .spawn_local(async move {
+                    let e = monitor_voltage_transition(io, &timer, true).await;
+                    voltage_errored.replace(Some(e));
+                    ()
+                })
+                .expect("must spawn");
+        }
+
+        // Start low, should wait for the transition
+        voltage_value.replace(false);
+        pool_poll.wake_children();
+        pool.run_until_stalled();
+        assert_eq!(voltage_errored.get(), None);
+
+        // expire timer and should fail.
+        *timer_expired.borrow_mut() = true;
+        pool_poll.wake_children();
+        pool.run_until_stalled();
+        assert_eq!(
+            voltage_errored.get(),
+            Some("Timer expired before voltage transition")
+        );
+
+        let mut pool = LocalPool::new();
+        {
+            let voltage_errored = voltage_errored.clone();
+            pool.spawner()
+                .spawn_local(async move {
+                    let e = monitor_voltage_transition(&io, &timer, true).await;
+                    voltage_errored.replace(Some(e));
+                    ()
+                })
+                .expect("must spawn");
+        }
+        pool_poll.wake_children();
+        pool.run_until_stalled();
+    }
 }
