@@ -312,3 +312,18 @@ protected:
     ITimer &timer;
 };
 ```
+
+# Feature Creep
+
+Given the original button-light feature:
+
+When a button is pressed, a light will flash until the button is released.
+
+Add the following capability:
+
+Correct light illumination is so critical that you must monitor the state
+of the light and fail if the monitor fails.
+
+When the light is commanded on or off, read a secondary IO value and if the
+voltage does not read the intended value within a given time interval, shutdown
+an enter a safe state.

@@ -77,12 +77,11 @@ async fn flash_until_button_released(
 
     // Loop until the timer expires or the button is released.
     // Keep looping if the thing that happened was the timer expiring.
-    //while TimerOrButton::Timer == timer_expired_or_button_released(io, timer).await {
     while TimerOrButton::Timer
         == first_to_complete_or_err(
-            io.wait_for_released(),
-            timer.wait_expired(),
-            monitor_voltage_transition(io, transition_timer, true),
+            io.wait_for_released(), // Good, if the button is released, we're done
+            timer.wait_expired(),   // Good, if the timer expires, we need to flip the light
+            monitor_voltage_transition(io, transition_timer, true), // Bad, if the voltage transitions away from the expected reading
         )
         .await?
         .into()
@@ -111,86 +110,15 @@ async fn timer_expired_or_button_released(
 
 #[cfg(test)]
 mod tests {
+    use futures::executor::LocalPool;
     use futures::task::LocalSpawnExt;
-    use futures::{executor::LocalPool, Future};
     use std::cell::Cell;
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::async_frame::FrameBlocker;
     use crate::sync::tests::{MockIO, MockTimer};
-    use crate::sync::Timer;
-    use crate::{ButtonEvent, TimerEvent, IO};
+    use crate::{PollingAsyncIO, PollingAsyncTimer};
 
     use super::*;
-
-    struct MockAsyncTimer {
-        timer: MockTimer,
-        blocker: FrameBlocker,
-    }
-    impl AsyncTimer for MockAsyncTimer {
-        fn reset(&mut self) {
-            self.timer.reset();
-        }
-        fn wait_expired(&self) -> impl Future<Output = TimerEvent> + Unpin {
-            Box::pin(async {
-                while !self.timer.expired() {
-                    self.blocker.yield_control().await;
-                }
-                TimerEvent {}
-            })
-        }
-    }
-
-    struct MockAsyncIO<I>
-    where
-        I: IO,
-    {
-        io: I,
-        blocker: FrameBlocker,
-    }
-    impl<I> IO for MockAsyncIO<I>
-    where
-        I: IO,
-    {
-        fn button_pressed(&self) -> bool {
-            self.io.button_pressed()
-        }
-        fn set_light(&mut self, state: Light) {
-            self.io.set_light(state);
-        }
-        fn read_voltage(&self) -> bool {
-            self.io.read_voltage()
-        }
-    }
-    impl<I> AsyncIO for MockAsyncIO<I>
-    where
-        I: IO,
-    {
-        fn wait_until_button_pressed(&mut self) -> impl Future<Output = ButtonEvent> + Unpin {
-            Box::pin(async {
-                while !self.io.button_pressed() {
-                    self.blocker.yield_control().await;
-                }
-                ButtonEvent {}
-            })
-        }
-        fn wait_for_released(&self) -> impl Future<Output = ButtonEvent> + Unpin {
-            Box::pin(async {
-                while !self.io.button_released() {
-                    self.blocker.yield_control().await;
-                }
-                ButtonEvent {}
-            })
-        }
-
-        fn wait_until_voltage_is(&self, value: bool) -> impl Future<Output = ()> + Unpin {
-            Box::pin(async move {
-                while self.io.read_voltage() != value {
-                    self.blocker.yield_control().await;
-                }
-            })
-        }
-    }
 
     #[test]
     fn test_flash_behavior() {
@@ -200,18 +128,18 @@ mod tests {
         let mut pool_poll = crate::async_frame::PollingPool::default();
         let button_pressed = Rc::new(RefCell::new(false));
         let voltage = Rc::new(RefCell::new(true));
-        let io = MockAsyncIO {
+        let io = PollingAsyncIO {
             io: MockIO::new(button_pressed.clone(), light.clone(), voltage),
             blocker: pool_poll.new_blocker(),
         };
 
         let time_expired = Rc::new(RefCell::new(false));
         let transition_time_expired = Rc::new(RefCell::new(false));
-        let timer = MockAsyncTimer {
+        let timer = PollingAsyncTimer {
             timer: MockTimer::new(time_expired.clone()),
             blocker: pool_poll.new_blocker(),
         };
-        let transition_timer = MockAsyncTimer {
+        let transition_timer = PollingAsyncTimer {
             timer: MockTimer::new(transition_time_expired.clone()),
             blocker: pool_poll.new_blocker(),
         };
@@ -277,53 +205,30 @@ mod tests {
 
     #[test]
     fn test_voltage_monitor() {
-        let mut pool_poll = crate::async_frame::PollingPool::default();
         let timer_expired = Rc::new(RefCell::new(false));
-        let timer = MockAsyncTimer {
-            timer: MockTimer::new(timer_expired.clone()),
-            blocker: pool_poll.new_blocker(),
-        };
         let voltage_value = Rc::new(RefCell::new(true));
-        let io = MockAsyncIO {
-            io: MockIO::new(
-                Rc::new(RefCell::new(false)),
-                Rc::new(RefCell::new(Light::Off)),
-                voltage_value.clone(),
-            ),
-            blocker: pool_poll.new_blocker(),
-        };
-
         let voltage_errored = Rc::new(Cell::new(None));
-        let mut pool = LocalPool::new();
-        {
-            let voltage_errored = voltage_errored.clone();
-            let io = &io;
-            pool.spawner()
-                .spawn_local(async move {
-                    let e = monitor_voltage_transition(io, &timer, true).await;
-                    voltage_errored.replace(Some(e));
-                    ()
-                })
-                .expect("must spawn");
-        }
 
-        // Start low, should wait for the transition
-        voltage_value.replace(false);
-        pool_poll.wake_children();
-        pool.run_until_stalled();
-        assert_eq!(voltage_errored.get(), None);
+        let reset = || {
+            timer_expired.replace(false);
+            voltage_value.replace(true);
+            voltage_errored.replace(None);
 
-        // expire timer and should fail.
-        *timer_expired.borrow_mut() = true;
-        pool_poll.wake_children();
-        pool.run_until_stalled();
-        assert_eq!(
-            voltage_errored.get(),
-            Some("Timer expired before voltage transition")
-        );
+            let mut pool_poll = crate::async_frame::PollingPool::default();
+            let timer = PollingAsyncTimer {
+                timer: MockTimer::new(timer_expired.clone()),
+                blocker: pool_poll.new_blocker(),
+            };
+            let io = PollingAsyncIO {
+                io: MockIO::new(
+                    Rc::new(RefCell::new(false)),
+                    Rc::new(RefCell::new(Light::Off)),
+                    voltage_value.clone(),
+                ),
+                blocker: pool_poll.new_blocker(),
+            };
 
-        let mut pool = LocalPool::new();
-        {
+            let mut pool = LocalPool::new();
             let voltage_errored = voltage_errored.clone();
             pool.spawner()
                 .spawn_local(async move {
@@ -332,8 +237,53 @@ mod tests {
                     ()
                 })
                 .expect("must spawn");
-        }
-        pool_poll.wake_children();
-        pool.run_until_stalled();
+
+            move || {
+                pool_poll.wake_children();
+                pool.run_until_stalled();
+            }
+        };
+        let mut frame = reset();
+
+        // Start low, should wait for the transition
+        voltage_value.replace(false);
+        frame();
+        assert_eq!(voltage_errored.get(), None);
+
+        // expire timer and should fail.
+        *timer_expired.borrow_mut() = true;
+        frame();
+        assert_eq!(
+            voltage_errored.get(),
+            Some("Timer expired before voltage transition")
+        );
+
+        let mut frame = reset();
+        frame();
+        assert_eq!(voltage_errored.get(), None);
+
+        // Change our voltage, and internally should transition to the waiting
+        // for the voltage to transition back
+        frame();
+        assert_eq!(voltage_errored.get(), None);
+
+        // Now drop voltage and see that it fails
+        voltage_value.replace(false);
+        frame();
+        assert_eq!(
+            voltage_errored.get(),
+            Some("Voltage transitioned away from expected reading after transition.")
+        );
+
+        // Just for fun, if the timer expires after transition, aok
+        let mut frame = reset();
+        voltage_value.replace(true);
+        frame();
+        assert_eq!(voltage_errored.get(), None);
+
+        // Should have transitioned to the waiting for the voltage to transition back
+        *timer_expired.borrow_mut() = true;
+        frame();
+        assert_eq!(voltage_errored.get(), None);
     }
 }

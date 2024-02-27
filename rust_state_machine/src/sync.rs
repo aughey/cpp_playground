@@ -1,30 +1,4 @@
-use std::time::Instant;
-
-use crate::{Light, IO};
-
-pub trait Timer {
-    fn reset(&mut self);
-    fn expired(&self) -> bool;
-}
-pub trait TimerFactory<T> {
-    fn new_timer(&self, timeout: f64) -> T
-    where
-        T: Timer;
-}
-
-struct SysTimer {
-    start: Instant,
-    timeout: f64,
-}
-impl Timer for SysTimer {
-    fn reset(&mut self) {
-        self.start = Instant::now();
-    }
-    fn expired(&self) -> bool {
-        let diff = Instant::now() - self.start;
-        diff.as_secs_f64() > self.timeout
-    }
-}
+use crate::{Light, Timer, TimerFactory, IO};
 
 #[derive(Debug)]
 pub(crate) enum States<T>
